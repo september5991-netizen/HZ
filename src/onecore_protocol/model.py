@@ -38,10 +38,14 @@ def evaluate_command(
     ACCEPT does NOT authorize execution without authenticated transport and
     durable deduplication. This is a non-executable reference validator.
     """
-    if command.version != 1 or not command.sender_id or not command.recipient_id:
+    if type(command.version) is not int or command.version != 1:
+        return Decision.DENY
+    if any(not isinstance(value, str) or not value.strip()
+           for value in (command.sender_id, command.recipient_id, command.action)):
         return Decision.DENY
     try:
-        UUID(command.command_id)
+        if not isinstance(command.command_id, str) or str(UUID(command.command_id)) != command.command_id:
+            return Decision.DENY
     except (ValueError, TypeError, AttributeError):
         return Decision.DENY
     if command.recipient_id != local_device_id:
@@ -52,7 +56,9 @@ def evaluate_command(
         return Decision.DENY
     if command.action not in allowed_actions.get(command.sender_id, frozenset()):
         return Decision.DENY
-    if command.expires_at.tzinfo is None or now.tzinfo is None:
+    if not isinstance(command.expires_at, datetime) or not isinstance(now, datetime):
+        return Decision.DENY
+    if command.expires_at.utcoffset() is None or now.utcoffset() is None:
         return Decision.DENY
     if command.expires_at.astimezone(timezone.utc) <= now.astimezone(timezone.utc):
         return Decision.EXPIRED
@@ -60,7 +66,7 @@ def evaluate_command(
         return Decision.DUPLICATE
     if not isinstance(command.payload, dict):
         return Decision.DENY
-    if command.action == "message" and (not isinstance(command.payload.get("text"), str) or len(command.payload["text"]) > 4096):
+    if command.action == "message" and (set(command.payload) != {"text"} or not isinstance(command.payload.get("text"), str) or len(command.payload["text"]) > 4096):
         return Decision.DENY
     if command.action == "ping" and command.payload:
         return Decision.DENY

@@ -39,5 +39,42 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(evaluate_command(msg, **self.context), Decision.DENY)
 
 
+
+    def test_invalid_field_types(self):
+        for field, value in [
+            ("version", True), ("version", 1.0), ("sender_id", []),
+            ("recipient_id", 42), ("action", []), ("expires_at", "tomorrow"),
+            ("expires_at", None), ("payload", []),
+        ]:
+            with self.subTest(field=field, value=value):
+                self.assertEqual(evaluate_command(replace(self.command, **{field: value}), **self.context), Decision.DENY)
+
+    def test_noncanonical_uuid(self):
+        for value in [self.command.command_id.upper(), self.command.command_id.replace("-", ""),
+                      "{" + self.command.command_id + "}"]:
+            with self.subTest(value=value):
+                self.assertEqual(evaluate_command(replace(self.command, command_id=value), **self.context), Decision.DENY)
+
+    def test_naive_time(self):
+        self.assertEqual(evaluate_command(replace(self.command, expires_at=self.now.replace(tzinfo=None)), **self.context), Decision.DENY)
+        self.assertEqual(evaluate_command(self.command, **dict(self.context, now=self.now.replace(tzinfo=None))), Decision.DENY)
+
+    def test_action_permission_and_revocation(self):
+        for changes in [dict(allowed_actions={}), dict(trusted_senders=frozenset())]:
+            self.assertEqual(evaluate_command(self.command, **dict(self.context, **changes)), Decision.DENY)
+
+    def test_message_contract(self):
+        for payload in [{"text": "hello"}, {"text": ""}, {"text": "x" * 4096}]:
+            self.assertEqual(evaluate_command(replace(self.command, action="message", payload=payload), **self.context), Decision.ACCEPT)
+        for payload in [{}, {"text": 42}, {"text": "hello", "extra": "data"}]:
+            self.assertEqual(evaluate_command(replace(self.command, action="message", payload=payload), **self.context), Decision.DENY)
+
+    def test_ping_rejects_payload(self):
+        self.assertEqual(evaluate_command(replace(self.command, payload={"text": "hello"}), **self.context), Decision.DENY)
+
+    def test_equivalent_timezone_expiry(self):
+        shifted = self.now.astimezone(timezone(timedelta(hours=10)))
+        self.assertEqual(evaluate_command(replace(self.command, expires_at=shifted), **self.context), Decision.EXPIRED)
+
 if __name__ == "__main__":
     unittest.main()
